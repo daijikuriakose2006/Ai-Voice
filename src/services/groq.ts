@@ -2,8 +2,8 @@ import { InterviewSetup, TranscriptItem, EvaluationResult, InterviewSession } fr
 
 // Read all configurations strictly from environment variables (.env)
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
-const GROQ_ENDPOINT = import.meta.env.VITE_GROQ_ENDPOINT;
-const MODEL = import.meta.env.VITE_GROQ_MODEL;
+const GROQ_ENDPOINT = import.meta.env.VITE_GROQ_ENDPOINT || 'https://api.groq.com/openai/v1/chat/completions';
+const MODEL = import.meta.env.VITE_GROQ_MODEL || 'groq/compound';
 
 /**
  * Direct call to Groq Chat Completions API
@@ -30,6 +30,27 @@ async function callGroqAPI(messages: Array<{ role: string; content: string }>, t
 
     if (!res.ok) {
       const errText = await res.text();
+      // If the configured model is not found, transparently retry with the default working model
+      if (res.status === 404 && errText.includes('model_not_found') && MODEL !== 'groq/compound') {
+        console.warn(`Model ${MODEL} not found. Retrying with fallback model groq/compound...`);
+        const retryRes = await fetch(GROQ_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'groq/compound',
+            messages,
+            temperature,
+            ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+          })
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          return retryData.choices[0]?.message?.content || '';
+        }
+      }
       throw new Error(`Groq API error (${res.status}): ${errText}`);
     }
 
